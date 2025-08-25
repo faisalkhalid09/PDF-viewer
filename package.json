@@ -1,0 +1,44 @@
+{
+  "name": "tldraw-pdf-viewer",
+  "version": "1.0.0",
+  "description": "Custom PDF Viewer Component for TLDraw with annotation support",
+  "main": "index.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "start": "node server.js",
+    "railway:start": "npm run build && npm start",
+    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tldraw/tldraw": "^2.4.0",
+    "express": "^4.21.2",
+    "lucide-react": "^0.294.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "@typescript-eslint/eslint-plugin": "^6.14.0",
+    "@typescript-eslint/parser": "^6.14.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "eslint": "^8.55.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.5",
+    "typescript": "^5.2.2",
+    "vite": "^5.0.8"
+  },
+  "keywords": [
+    "tldraw",
+    "pdf",
+    "viewer",
+    "annotation",
+    "react",
+    "typescript"
+  ],
+  "author": "TLDraw PDF Viewer",
+  "license": "MIT"
+}
