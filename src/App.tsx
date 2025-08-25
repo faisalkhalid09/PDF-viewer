@@ -1,11 +1,14 @@
+import React from 'react'
 import { VirtualClassroom } from './components/VirtualClassroom'
 
 // Sample PDF images - in a real app, these would come from a PDF conversion service
-const samplePdfImages = [
-  '/sample-pdf/page-1.svg'
+const samplePdfImages: string[] = [
+  // Empty array - user will upload their own PDFs
 ]
 
 function App() {
+  console.log('🚀 TLDraw PDF Viewer App starting...')
+  
   return (
     <div className="App">
       <VirtualClassroom initialPdfImages={samplePdfImages} />

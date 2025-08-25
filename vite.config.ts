@@ -1,15 +1,17 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import { resolve } from 'path'
 
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  assetsInclude: ['**/*.wasm'],
   server: {
     port: 3000,
     open: true
   },
   optimizeDeps: {
-    include: ['@tldraw/tldraw']
+    include: ['@tldraw/tldraw', 'react-pdf']
   },
   build: {
     // Optimize for Railway deployment
@@ -27,7 +29,7 @@ export default defineConfig({
         manualChunks: {
           vendor: ['react', 'react-dom'],
           tldraw: ['@tldraw/tldraw'],
-          pdf: ['pdfjs-dist']
+          pdf: ['react-pdf']
         }
       }
     },

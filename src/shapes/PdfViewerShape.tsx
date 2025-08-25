@@ -1,7 +1,3 @@
-// TEMPORARILY DISABLED DUE TO TLDRAW API ISSUES
-// This file will be re-enabled once TLDraw custom shape API is stable
-
-/*
 import {
   BaseBoxShapeUtil,
   DefaultColorStyle,
@@ -14,25 +10,27 @@ import {
   resizeBox,
 } from '@tldraw/tldraw'
 import { PdfViewerComponent } from '../components/PdfViewerComponent'
-*/
 
-// Temporary type definition for compatibility
-export type PdfViewerShape = {
-  id: string
-  type: 'pdf-viewer'
-  props: {
+// PDF Viewer Shape Type Definition
+export type PdfViewerShape = TLBaseShape<
+  'pdf-viewer',
+  {
     w: number
     h: number
-    color: string
+    color: TLDefaultColorStyle
     imageUrls: string[]
     isMaximized: boolean
     isMinimized: boolean
-    originalBounds?: { w: number; h: number; x: number; y: number }
+    originalBounds?: {
+      w: number
+      h: number
+      x: number
+      y: number
+    }
   }
-}
+>
 
-/*
-
+// PDF Viewer Shape Util Implementation
 export class PdfViewerShapeUtil extends BaseBoxShapeUtil<PdfViewerShape> {
   static override type = 'pdf-viewer' as const
   static override props: RecordProps<PdfViewerShape> = {
@@ -119,7 +117,6 @@ export class PdfViewerShapeUtil extends BaseBoxShapeUtil<PdfViewerShape> {
 
   private handleMaximize = (shape: PdfViewerShape) => {
     const viewport = this.editor.getViewportPageBounds()
-    const currentBounds = this.editor.getShapePageBounds(shape)!
     
     this.editor.updateShape({
       ...shape,
@@ -185,4 +182,3 @@ export class PdfViewerShapeUtil extends BaseBoxShapeUtil<PdfViewerShape> {
     this.editor.deleteShape(shape)
   }
 }
-*/

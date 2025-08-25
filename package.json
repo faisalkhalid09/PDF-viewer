@@ -3,22 +3,22 @@
   "version": "1.0.0",
   "description": "Custom PDF Viewer Component for TLDraw with annotation support",
   "main": "start-server.js",
- "scripts": {
-   "dev": "vite",
-   "build": "vite build",
-   "start": "serve -s dist -l $PORT",
-   "postinstall": "npm run build"
-  }
-  ,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "start": "node start-server.js",
+    "postinstall": "npm run build"
+  },
   "dependencies": {
     "@tldraw/tldraw": "^2.4.0",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
     "@vitejs/plugin-react": "^4.2.1",
     "lucide-react": "^0.294.0",
-    "pdfjs-dist": "^4.10.38",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-pdf": "^10.1.0",
+    "pdfjs-dist": "5.3.93",
     "serve": "^14.2.1",
     "typescript": "^5.2.2",
     "vite": "^5.0.8"

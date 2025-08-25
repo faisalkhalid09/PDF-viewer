@@ -32,6 +32,25 @@ export const PdfViewerComponent: React.FC<PdfViewerComponentProps> = ({
   
   const { imageUrls, isMaximized, isMinimized } = shape.props
 
+  // Ensure mouse wheel scroll works inside TLDraw by handling wheel events locally
+  useEffect(() => {
+    const el = scrollContainerRef.current
+    if (!el) return
+
+    const onWheel = (e: WheelEvent) => {
+      // Prevent TLDraw canvas from zooming/panning on wheel
+      e.stopPropagation()
+      // Perform manual scroll so the container moves even if default is prevented upstream
+      el.scrollTop += e.deltaY
+      el.scrollLeft += e.deltaX
+      e.preventDefault()
+    }
+
+    // Use passive: false so preventDefault is respected
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel as EventListener)
+  }, [])
+
   // Auto-hide toolbar after 3 seconds of no interaction
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -234,6 +253,9 @@ export const PdfViewerComponent: React.FC<PdfViewerComponentProps> = ({
           height: '100%',
           overflow: 'auto',
           backgroundColor: '#f5f5f5',
+          overscrollBehavior: 'contain',
+          touchAction: 'pan-y',
+          WebkitOverflowScrolling: 'touch',
         }}
       >
         {imageUrls.length === 0 ? (
@@ -262,20 +284,22 @@ export const PdfViewerComponent: React.FC<PdfViewerComponentProps> = ({
                   overflow: 'hidden',
                 }}
               >
-                <img
-                  src={imageUrl}
-                  alt={`PDF Page ${index + 1}`}
-                  style={{
-                    width: '100%',
-                    height: 'auto',
-                    display: 'block',
-                    pointerEvents: 'none', // Allow TLDraw annotations to work
-                  }}
-                  onError={(e) => {
-                    const target = e.target as HTMLImageElement
-                    target.style.display = 'none'
-                  }}
-                />
+                  <img
+                    src={imageUrl}
+                    alt={`PDF Page ${index + 1}`}
+                    style={{
+                      width: '100%',
+                      height: 'auto',
+                      display: 'block',
+                      pointerEvents: 'none', // Allow TLDraw annotations to pass through
+                      userSelect: 'none', // Prevent text selection
+                      draggable: false, // Prevent dragging
+                    }}
+                    onError={(e) => {
+                      const target = e.target as HTMLImageElement
+                      target.style.display = 'none'
+                    }}
+                  />
               </div>
             ))}
           </div>
