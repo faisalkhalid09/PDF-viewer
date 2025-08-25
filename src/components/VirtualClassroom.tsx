@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { TldrawEditor } from './TldrawEditor'
-import { FileText, Upload, Plus } from 'lucide-react'
+import { FileText, Upload, Plus, AlertCircle, CheckCircle, Loader } from 'lucide-react'
+import { processUploadedFiles } from '../utils/pdfProcessor'
 
 interface VirtualClassroomProps {
   initialPdfImages?: string[]
@@ -11,21 +12,51 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
 }) => {
   const [pdfImageSets, setPdfImageSets] = useState<string[][]>([initialPdfImages])
   const [currentPdfSet, setCurrentPdfSet] = useState(0)
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [processingStatus, setProcessingStatus] = useState('')
+  const [processingError, setProcessingError] = useState('')
 
   const handleAddPdfSet = (imageUrls: string[]) => {
     setPdfImageSets(prev => [...prev, imageUrls])
     setCurrentPdfSet(pdfImageSets.length)
   }
 
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
-    if (files) {
-      // In a real implementation, you would convert PDF to images here
-      // For now, we'll simulate this with placeholder URLs
-      const mockImageUrls = Array.from(files).map((file) => 
-        URL.createObjectURL(file) // This would be actual converted images in production
-      )
-      handleAddPdfSet(mockImageUrls)
+    if (!files || files.length === 0) return
+
+    setIsProcessing(true)
+    setProcessingError('')
+    setProcessingStatus('Processing files...')
+
+    try {
+      const processedFiles = await processUploadedFiles(files)
+      
+      if (processedFiles.length === 0) {
+        setProcessingError('No supported files found. Please upload PDF or image files.')
+        return
+      }
+
+      // Add each processed file as a separate PDF set
+      for (const processedFile of processedFiles) {
+        if (processedFile.imageUrls.length > 0) {
+          setProcessingStatus(`Loaded ${processedFile.fileName} (${processedFile.imageUrls.length} pages)`)
+          handleAddPdfSet(processedFile.imageUrls)
+          
+          // Small delay to show success message
+          await new Promise(resolve => setTimeout(resolve, 500))
+        }
+      }
+      
+      setProcessingStatus('Upload complete!')
+      setTimeout(() => setProcessingStatus(''), 2000)
+    } catch (error: any) {
+      setProcessingError(`Failed to process files: ${error?.message || 'Unknown error'}`)
+      console.error('File upload error:', error)
+    } finally {
+      setIsProcessing(false)
+      // Clear the input
+      event.target.value = ''
     }
   }
 
@@ -45,7 +76,7 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '0 20px',
-          zIndex: 1000,
+          zIndex: 100,
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -62,20 +93,28 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
               display: 'flex',
               alignItems: 'center',
               gap: '8px',
-              background: 'rgba(255, 255, 255, 0.2)',
+              background: isProcessing ? 'rgba(255, 255, 255, 0.1)' : 'rgba(255, 255, 255, 0.2)',
               padding: '8px 16px',
               borderRadius: '6px',
-              cursor: 'pointer',
+              cursor: isProcessing ? 'not-allowed' : 'pointer',
               transition: 'background-color 0.2s ease',
+              opacity: isProcessing ? 0.7 : 1,
             }}
           >
-            <Upload size={18} />
-            <span style={{ fontSize: '14px' }}>Upload PDF</span>
+            {isProcessing ? (
+              <Loader size={18} className="animate-spin" />
+            ) : (
+              <Upload size={18} />
+            )}
+            <span style={{ fontSize: '14px' }}>
+              {isProcessing ? 'Processing...' : 'Upload PDF'}
+            </span>
             <input
               type="file"
               accept=".pdf,image/*"
               multiple
               onChange={handleFileUpload}
+              disabled={isProcessing}
               style={{ display: 'none' }}
             />
           </label>
@@ -111,6 +150,53 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
           samplePdfImages={pdfImageSets[currentPdfSet] || []}
         />
       </div>
+
+      {/* Processing Status Notification */}
+      {(processingStatus || processingError) && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '80px',
+            right: '20px',
+            backgroundColor: processingError ? '#dc3545' : '#28a745',
+            color: 'white',
+            padding: '12px 16px',
+            borderRadius: '6px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            zIndex: 200,
+            maxWidth: '400px',
+            boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+          }}
+        >
+          {processingError ? (
+            <AlertCircle size={18} />
+          ) : isProcessing ? (
+            <Loader size={18} className="animate-spin" />
+          ) : (
+            <CheckCircle size={18} />
+          )}
+          <span style={{ fontSize: '14px' }}>
+            {processingError || processingStatus}
+          </span>
+          {processingError && (
+            <button
+              onClick={() => setProcessingError('')}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'white',
+                cursor: 'pointer',
+                padding: '2px',
+                marginLeft: '8px',
+              }}
+            >
+              ×
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Instructions Overlay (shows when no PDFs are loaded) */}
       {pdfImageSets[currentPdfSet]?.length === 0 && (

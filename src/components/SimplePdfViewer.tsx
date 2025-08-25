@@ -63,7 +63,7 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
           justifyContent: 'space-between',
           padding: '0 12px',
           cursor: 'pointer',
-          zIndex: 1000,
+          zIndex: 100,
         }}
         onClick={handleRestore}
       >
@@ -101,7 +101,7 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
         borderRadius: '8px',
         boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
         overflow: 'hidden',
-        zIndex: 1000,
+        zIndex: 100,
       }}
     >
       {/* Header with controls */}

@@ -48,7 +48,61 @@ body {
   height: 100%;
 }
 
+/* Fix z-index for TLDraw UI components */
+.tl-ui {
+  z-index: 9999 !important;
+}
+
+/* Ensure TLDraw popups and dialogs appear above everything */
+.tl-popup,
+.tl-dialog,
+.tl-menu,
+.tl-toolbar,
+.tl-context-menu,
+.tl-style-panel {
+  z-index: 10000 !important;
+}
+
+/* Specific fix for color picker and style panels */
+.tl-color-picker,
+.tl-style-panel-color-picker,
+.tl-color-palette,
+.tl-palette,
+.tlui-color-picker,
+.tlui-style-panel,
+.tlui-popover,
+.tlui-tooltip {
+  z-index: 10001 !important;
+}
+
+/* Additional Tldraw UI components that need high z-index */
+.tlui-dropdown-menu,
+.tlui-menu,
+.tlui-button-grid,
+.tlui-style-panel__wrapper {
+  z-index: 10002 !important;
+}
+
+/* Move color card down to avoid header overlap */
+.tlui-style-panel {
+  top: 80px !important;
+}
+
 /* Hide default cursor when over PDF images to allow annotations */
 .pdf-page img {
   cursor: crosshair;
+}
+
+/* Loading spinner animation */
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
