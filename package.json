@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "build:railway": "cross-env NODE_OPTIONS=--max_old_space_size=2048 GENERATE_SOURCEMAP=false tsc && cross-env NODE_OPTIONS=--max_old_space_size=2048 GENERATE_SOURCEMAP=false vite build",
+    "build:railway": "cross-env NODE_OPTIONS=--max_old_space_size=2048 GENERATE_SOURCEMAP=false vite build",
+    "build:check": "tsc --noEmit && npm run build:railway",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "start": "node server.js",
     "railway:start": "npm run build:railway && npm start",
@@ -44,5 +45,9 @@
     "typescript"
   ],
   "author": "TLDraw PDF Viewer",
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
 }

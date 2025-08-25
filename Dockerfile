@@ -1,6 +1,6 @@
 # Multi-stage build for Railway deployment
 # Stage 1: Build stage
-FROM node:18-alpine AS builder
+FROM node:20-alpine AS builder
 
 # Set working directory
 WORKDIR /app
@@ -13,23 +13,25 @@ ENV NODE_ENV=production
 # Copy package files first for better caching
 COPY package*.json ./
 
-# Install dependencies with npm ci for faster, reliable builds
-RUN npm ci --only=production && npm ci --only=development
+# Install ALL dependencies (including dev dependencies for build)
+RUN npm ci
 
 # Copy source code
 COPY . .
 
 # Build the application with optimizations
-RUN npm run build
+RUN npm run build:railway
 
 # Stage 2: Production stage
-FROM node:18-alpine AS production
+FROM node:20-alpine AS production
 
 # Set working directory
 WORKDIR /app
 
-# Install only production dependencies
+# Copy package files
 COPY package*.json ./
+
+# Install only production dependencies
 RUN npm ci --only=production && npm cache clean --force
 
 # Copy built application from builder stage
