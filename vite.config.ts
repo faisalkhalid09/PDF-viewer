@@ -10,5 +10,28 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: ['@tldraw/tldraw']
+  },
+  build: {
+    // Optimize for Railway deployment
+    sourcemap: false, // Disable sourcemaps to reduce build size and time
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true, // Remove console.logs in production
+        drop_debugger: true
+      }
+    },
+    rollupOptions: {
+      output: {
+        // Split chunks to avoid large bundle sizes
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          tldraw: ['@tldraw/tldraw'],
+          pdf: ['pdfjs-dist']
+        }
+      }
+    },
+    // Increase chunk size warning limit
+    chunkSizeWarningLimit: 1000
   }
 })

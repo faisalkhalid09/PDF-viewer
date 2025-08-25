@@ -6,16 +6,18 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:railway": "cross-env NODE_OPTIONS=--max_old_space_size=2048 GENERATE_SOURCEMAP=false tsc && cross-env NODE_OPTIONS=--max_old_space_size=2048 GENERATE_SOURCEMAP=false vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "start": "node server.js",
-    "railway:start": "npm run build && npm start",
+    "railway:start": "npm run build:railway && npm start",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "@tldraw/tldraw": "^2.4.0",
-    "express": "^4.21.2",
+    "express": "^4.18.2",
     "lucide-react": "^0.294.0",
+    "pdfjs-dist": "^4.10.38",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
@@ -25,9 +27,11 @@
     "@typescript-eslint/eslint-plugin": "^6.14.0",
     "@typescript-eslint/parser": "^6.14.0",
     "@vitejs/plugin-react": "^4.2.1",
+    "cross-env": "^7.0.3",
     "eslint": "^8.55.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
+    "terser": "^5.19.4",
     "typescript": "^5.2.2",
     "vite": "^5.0.8"
   },
