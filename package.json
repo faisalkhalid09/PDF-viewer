@@ -5,13 +5,9 @@
   "main": "index.js",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && vite build",
-    "build:railway": "cross-env NODE_OPTIONS=--max_old_space_size=2048 GENERATE_SOURCEMAP=false vite build",
-    "build:docker": "vite build",
-    "build:check": "tsc --noEmit && npm run build:railway",
+    "build": "vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "start": "node server.js",
-    "railway:start": "npm run build:railway && npm start",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "type-check": "tsc --noEmit"
   },
