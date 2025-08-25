@@ -2,36 +2,32 @@
   "name": "tldraw-pdf-viewer",
   "version": "1.0.0",
   "description": "Custom PDF Viewer Component for TLDraw with annotation support",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0 --port 4173",
     "start": "node server.js",
-    "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "type-check": "tsc --noEmit"
+    "postinstall": "npm run build"
   },
   "dependencies": {
     "@tldraw/tldraw": "^2.4.0",
+    "@types/react": "^18.2.45",
+    "@types/react-dom": "^18.2.18",
+    "@vitejs/plugin-react": "^4.2.1",
     "express": "^4.18.2",
     "lucide-react": "^0.294.0",
     "pdfjs-dist": "^4.10.38",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  },
-  "devDependencies": {
-    "@types/react": "^18.2.45",
-    "@types/react-dom": "^18.2.18",
-    "@typescript-eslint/eslint-plugin": "^6.14.0",
-    "@typescript-eslint/parser": "^6.14.0",
-    "@vitejs/plugin-react": "^4.2.1",
-    "cross-env": "^7.0.3",
-    "eslint": "^8.55.0",
-    "eslint-plugin-react-hooks": "^4.6.0",
-    "eslint-plugin-react-refresh": "^0.4.5",
-    "terser": "^5.19.4",
+    "react-dom": "^18.2.0",
     "typescript": "^5.2.2",
     "vite": "^5.0.8"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^6.14.0",
+    "@typescript-eslint/parser": "^6.14.0",
+    "eslint": "^8.55.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "eslint-plugin-react-refresh": "^0.4.5"
   },
   "keywords": [
     "tldraw",
@@ -44,7 +40,7 @@
   "author": "TLDraw PDF Viewer",
   "license": "MIT",
   "engines": {
-    "node": ">=20.0.0",
-    "npm": ">=10.0.0"
+    "node": "20.x",
+    "npm": "10.x"
   }
 }
