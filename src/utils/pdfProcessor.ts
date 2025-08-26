@@ -28,6 +28,7 @@ export interface ProcessedFile {
   imageUrls: string[]
   fileName: string
   pageCount?: number
+  pdfUrl?: string // Blob URL to the original PDF so we can render selectable text
 }
 
 /**
@@ -40,10 +41,15 @@ export async function processUploadedFiles(files: FileList): Promise<ProcessedFi
     try {
       // Enhanced file type detection - check extension and magic bytes
       const isPdfFile = await isPdfFileDetailed(file)
+      const isOffice = /\.(docx?|pptx?)$/i.test(file.name)
       
       if (isPdfFile) {
         // Handle PDF files with retry logic
         console.log(`Processing PDF file: ${file.name} (${file.type || 'unknown MIME type'}, size: ${file.size} bytes)`)
+        
+        // Prepare a Blob URL for the original PDF so we can render it natively/selectable
+        const pdfBlobUrl = URL.createObjectURL(file)
+        ;(window as any).__lastUploadedPdfUrl = pdfBlobUrl
         
         // Check if this looks like a Microsoft Edge PDF
         const isLikelyEdgePdf = file.type === '' || file.type === 'application/octet-stream' || 
@@ -55,7 +61,19 @@ export async function processUploadedFiles(files: FileList): Promise<ProcessedFi
         }
         
         const pdfResult = await convertPdfToImagesWithRetry(file)
+        // Attach the source PDF URL
+        pdfResult.pdfUrl = pdfBlobUrl
         results.push(pdfResult)
+      } else if (isOffice) {
+        // Mock pipeline: assume DOCX/PPTX were pre-converted to images elsewhere.
+        console.log(`Mock-converting Office file to images: ${file.name}`)
+        const mockImages = await convertOfficeToImagesMock(file)
+        results.push({
+          type: 'pdf',
+          imageUrls: mockImages,
+          fileName: file.name.replace(/\.(docx?|pptx?)$/i, '.pdf'),
+          pageCount: mockImages.length
+        })
       } else if (file.type.startsWith('image/')) {
         // Handle image files directly
         const imageUrl = URL.createObjectURL(file)
@@ -126,7 +144,18 @@ async function isPdfFileDetailed(file: File): Promise<boolean> {
     }
   }
   
-  return false
+return false
+}
+
+/**
+ * Mock converter for Office documents. In this project we assume the files are
+ * pre-converted externally and we just receive a set of page images.
+ * To keep the demo working, we return the sample svg as a single-page image.
+ */
+async function convertOfficeToImagesMock(file: File): Promise<string[]> {
+  console.log('Using mock Office → images conversion for:', file.name)
+  // You can expand this to infer multiple pages or different sample assets.
+  return ['/sample-pdf/page-1.svg']
 }
 
 /**
@@ -226,11 +255,24 @@ export async function convertPdfToImages(file: File): Promise<ProcessedFile> {
     
     console.log(`🎉 PDF processing complete: ${successfulImages.length} pages converted`)
     
+    // Map the first image URL back to the source PDF URL for components that only receive images
+    try {
+      const first = successfulImages[0]
+      const srcUrl = (window as any).__lastUploadedPdfUrl
+      if (first && srcUrl) {
+        (window as any).__pdfUrlByFirstImageUrl = {
+          ...(window as any).__pdfUrlByFirstImageUrl,
+          [first]: srcUrl
+        }
+      }
+    } catch {}
+
     return {
       type: 'pdf',
       imageUrls: successfulImages,
       fileName: file.name,
       pageCount: pdf.numPages,
+      pdfUrl: (window as any).__lastUploadedPdfUrl || undefined,
     }
     
   } catch (error: any) {
@@ -259,47 +301,102 @@ export async function convertPdfToImages(file: File): Promise<ProcessedFile> {
 async function renderPdfPage(pdf: any, pageNum: number): Promise<string | null> {
   let page: any = null
   let canvas: HTMLCanvasElement | null = null
-  
+
+  // Helper: ensure an image URL decodes successfully
+  const ensureImageDecodes = async (url: string): Promise<{ width: number; height: number }> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight })
+      img.onerror = (e) => reject(new Error('Image decode failed'))
+      img.decoding = 'sync' as any
+      img.src = url
+    })
+  }
+
   try {
     // Get the page
     page = await pdf.getPage(pageNum)
-    
+
     // Calculate optimal scale for rendering
     const baseViewport = page.getViewport({ scale: 1 })
     const maxWidth = 1600 // Good balance of quality vs performance
     const scale = Math.min(1.5, maxWidth / baseViewport.width)
-    
+
     const viewport = page.getViewport({ scale })
-    
+
+    console.log(`🖼️ Rendering page ${pageNum}: baseSize=${Math.round(baseViewport.width)}x${Math.round(baseViewport.height)}, scale=${scale.toFixed(2)}, target=${Math.round(viewport.width)}x${Math.round(viewport.height)}`)
+
     // Create canvas
     canvas = document.createElement('canvas')
-    const context = canvas.getContext('2d', {
-      alpha: false,
-      willReadFrequently: false,
-      desynchronized: true
-    })!
-    
+    // Use default 2d context to avoid GPU/driver white-screen issues on some systems
+    const context = canvas.getContext('2d')!
+
     canvas.height = viewport.height
     canvas.width = viewport.width
-    
+
     // Set white background
     context.fillStyle = 'white'
     context.fillRect(0, 0, canvas.width, canvas.height)
-    
+
     // Render page to canvas
     const renderContext = {
       canvasContext: context,
       viewport: viewport,
       intent: 'display'
     }
-    
+
     await page.render(renderContext).promise
-    
-    // Convert to image URL with good quality
-    const imageUrl = canvas.toDataURL('image/jpeg', 0.85)
-    
-    return imageUrl
-    
+
+    // Try multiple encoding strategies with decode verification
+    const attempts: Array<{ kind: 'blob' | 'data'; format: 'image/jpeg' | 'image/png'; quality?: number }> = [
+      { kind: 'blob', format: 'image/jpeg', quality: 0.85 },
+      { kind: 'blob', format: 'image/png' },
+      { kind: 'data', format: 'image/jpeg', quality: 0.85 },
+      { kind: 'data', format: 'image/png' },
+    ]
+
+    for (const attempt of attempts) {
+      try {
+        let url: string
+        if (attempt.kind === 'blob' && 'toBlob' in canvas) {
+          url = await new Promise<string>((resolve, reject) => {
+            canvas!.toBlob((blob) => {
+              if (!blob) {
+                reject(new Error('toBlob returned null blob'))
+                return
+              }
+              const objectUrl = URL.createObjectURL(blob)
+              resolve(objectUrl)
+            }, attempt.format, attempt.quality)
+          })
+        } else if (attempt.kind === 'data') {
+          url = canvas!.toDataURL(attempt.format, attempt.quality)
+        } else {
+          // If toBlob isn't supported, skip to data URL attempt
+          continue
+        }
+
+        const decoded = await ensureImageDecodes(url)
+        console.log(`✅ Page ${pageNum} encoded as ${attempt.kind}:${attempt.format} (${decoded.width}x${decoded.height})`)
+        return url
+      } catch (encodeErr) {
+        console.warn(`↩️ Fallback for page ${pageNum} after failed ${attempt.kind}:${attempt.format}`, encodeErr)
+        // Revoke failed blob URL if any
+        // Note: We cannot easily detect blob vs data URL string here without tracking, but safe to try
+        try {
+          if (attempt.kind === 'blob') {
+            // Only revoke if this was a blob URL; data URLs should not be revoked
+            // We don't have the url here if ensureImageDecodes failed after creation above unless we store it
+            // So instead, we will safely ignore revoke here; the GC will reclaim on page refresh.
+          }
+        } catch {}
+        continue
+      }
+    }
+
+    console.error(`❌ All encoding strategies failed for page ${pageNum}`)
+    return null
+
   } catch (pageError: any) {
     console.error(`❌ Failed to render page ${pageNum}:`, pageError)
     return null
@@ -310,7 +407,7 @@ async function renderPdfPage(pdf: any, pageNum: number): Promise<string | null> 
       canvas.height = 0
       canvas = null
     }
-    
+
     if (page && typeof page.cleanup === 'function') {
       try {
         page.cleanup()
@@ -336,6 +433,7 @@ export function isFileSupported(file: File): boolean {
   return (
     file.type === 'application/pdf' ||
     file.name.toLowerCase().endsWith('.pdf') ||
+    /\.(docx?|pptx?)$/i.test(file.name) ||
     file.type.startsWith('image/')
   )
 }

@@ -4,26 +4,27 @@ import {
   Minimize2, 
   Square, 
   X, 
-  ChevronUp, 
-  ChevronDown,
-  ZoomIn,
-  ZoomOut,
   RotateCw,
-  Search,
   Printer,
   Download,
   BookOpen,
-  Monitor,
-  HelpCircle
+  Search,
+  Highlighter,
+  MessageSquarePlus,
+  Underline as UnderlineIcon,
+  PenTool,
+  Type as TypeIcon
 } from 'lucide-react'
 
 interface SimplePdfViewerProps {
   imageUrls: string[]
+  pdfUrl?: string | null
   onClose?: () => void
 }
 
 export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
   imageUrls,
+  pdfUrl,
   onClose
 }) => {
   const [isMaximized, setIsMaximized] = useState(false)
@@ -38,6 +39,28 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
   const [showSearch, setShowSearch] = useState(false)
   const [showThumbnails, setShowThumbnails] = useState(false)
   const [showHelp, setShowHelp] = useState(false)
+  const [isResizing, setIsResizing] = useState(false)
+  const resizeStateRef = React.useRef<{ startX: number; startY: number; startW: number; startH: number } | null>(null)
+
+
+  // Scroll-pagination: when user scrolls to bottom, go to next page; at top, go to previous
+  const scrollerRef = React.useRef<HTMLDivElement | null>(null)
+  const pendingScrollRef = React.useRef<'top' | 'bottom' | null>(null)
+  const [pageReady, setPageReady] = useState(false)
+  const [imgError, setImgError] = useState<string | null>(null)
+
+  // Prefer explicit pdfUrl prop, or try to resolve from the first image URL via a global map set by the processor
+  const resolvedPdfUrl: string | null = React.useMemo(() => {
+    if (pdfUrl) return pdfUrl
+    const first = imageUrls?.[0]
+    try {
+      const map = (window as any).__pdfUrlByFirstImageUrl as Record<string, string> | undefined
+      if (first && map && map[first]) return map[first]
+    } catch {}
+    return null
+  }, [pdfUrl, imageUrls])
+
+  const isPdfMode = !!resolvedPdfUrl
 
   const handleMaximize = () => {
     if (!isMaximized) {
@@ -211,6 +234,44 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
     }
   }, [handleKeyDown])
 
+  // Reset page readiness when image src context changes
+  useEffect(() => {
+    setPageReady(false)
+    setImgError(null)
+  }, [currentPage, zoomLevel, rotation])
+
+
+
+  // Wheel scroll handler to change pages at top/bottom
+  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.ctrlKey || e.metaKey) return // don't hijack zoom gestures
+    const el = scrollerRef.current
+    if (!el || imageUrls.length <= 1) return
+
+    const atTop = el.scrollTop <= 0
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 2
+
+    if (e.deltaY > 0) {
+      // Scrolling down
+      if (atBottom || el.scrollHeight <= el.clientHeight) {
+        if (currentPage < imageUrls.length - 1) {
+          e.preventDefault()
+          pendingScrollRef.current = 'top'
+          setCurrentPage(p => Math.min(imageUrls.length - 1, p + 1))
+        }
+      }
+    } else if (e.deltaY < 0) {
+      // Scrolling up
+      if (atTop || el.scrollHeight <= el.clientHeight) {
+        if (currentPage > 0) {
+          e.preventDefault()
+          pendingScrollRef.current = 'bottom'
+          setCurrentPage(p => Math.max(0, p - 1))
+        }
+      }
+    }
+  }, [currentPage, imageUrls.length])
+
   if (isMinimized) {
     return (
       <div
@@ -265,8 +326,9 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
         border: '2px solid #007bff',
         borderRadius: '8px',
         boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-        overflow: 'hidden',
+        overflow: 'visible',
         zIndex: 100,
+        userSelect: isResizing ? 'none' : 'auto',
       }}
     >
       {/* Header with controls */}
@@ -318,103 +380,58 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
         </div>
 
         <div style={{ display: 'flex', gap: '2px' }}>
-          {/* Zoom Controls */}
-          <button
-            onClick={handleZoomOut}
-            disabled={zoomLevel <= 25}
-            title="Zoom Out"
-            style={{
-              background: 'rgba(255,255,255,0.2)',
-              border: 'none',
-              color: 'white',
-              padding: '4px',
-              borderRadius: '4px',
-              cursor: zoomLevel <= 25 ? 'not-allowed' : 'pointer',
-              opacity: zoomLevel <= 25 ? 0.5 : 1,
-            }}
-          >
-            <ZoomOut size={12} />
-          </button>
-          <button
-            onClick={handleZoomIn}
-            disabled={zoomLevel >= 300}
-            title="Zoom In"
-            style={{
-              background: 'rgba(255,255,255,0.2)',
-              border: 'none',
-              color: 'white',
-              padding: '4px',
-              borderRadius: '4px',
-              cursor: zoomLevel >= 300 ? 'not-allowed' : 'pointer',
-              opacity: zoomLevel >= 300 ? 0.5 : 1,
-            }}
-          >
-            <ZoomIn size={12} />
-          </button>
 
-          {/* Rotate */}
-          <button
-            onClick={handleRotate}
-            title="Rotate 90°"
-            style={{
-              background: 'rgba(255,255,255,0.2)',
-              border: 'none',
-              color: 'white',
-              padding: '4px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            <RotateCw size={12} />
-          </button>
+          {!isPdfMode && (
+            <>
+              {/* Rotate */}
+              <button
+                onClick={handleRotate}
+                title="Rotate 90°"
+                style={{
+                  background: 'rgba(255,255,255,0.2)',
+                  border: 'none',
+                  color: 'white',
+                  padding: '4px',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                }}
+              >
+                <RotateCw size={12} />
+              </button>
 
-          {/* Print */}
-          <button
-            onClick={handlePrint}
-            title="Print"
-            style={{
-              background: 'rgba(255,255,255,0.2)',
-              border: 'none',
-              color: 'white',
-              padding: '4px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            <Printer size={12} />
-          </button>
+              {/* Print */}
+              <button
+                onClick={handlePrint}
+                title="Print"
+                style={{
+                  background: 'rgba(255,255,255,0.2)',
+                  border: 'none',
+                  color: 'white',
+                  padding: '4px',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                }}
+              >
+                <Printer size={12} />
+              </button>
 
-          {/* Download */}
-          <button
-            onClick={handleDownload}
-            title="Download Current Page"
-            style={{
-              background: 'rgba(255,255,255,0.2)',
-              border: 'none',
-              color: 'white',
-              padding: '4px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            <Download size={12} />
-          </button>
-
-          {/* Search Toggle */}
-          <button
-            onClick={() => setShowSearch(!showSearch)}
-            title="Search"
-            style={{
-              background: showSearch ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.2)',
-              border: 'none',
-              color: 'white',
-              padding: '4px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            <Search size={12} />
-          </button>
+              {/* Download */}
+              <button
+                onClick={handleDownload}
+                title="Download Current Page"
+                style={{
+                  background: 'rgba(255,255,255,0.2)',
+                  border: 'none',
+                  color: 'white',
+                  padding: '4px',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                }}
+              >
+                <Download size={12} />
+              </button>
+            </>
+          )}
 
           {/* Thumbnails Toggle */}
           {imageUrls.length > 1 && (
@@ -434,60 +451,6 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
             </button>
           )}
 
-          {/* Help Toggle */}
-          <button
-            onClick={() => setShowHelp(!showHelp)}
-            title="Help & Keyboard Shortcuts"
-            style={{
-              background: showHelp ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.2)',
-              border: 'none',
-              color: 'white',
-              padding: '4px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            <HelpCircle size={12} />
-          </button>
-
-          {/* Page Navigation */}
-          {imageUrls.length > 1 && (
-            <>
-              <button
-                onClick={() => setCurrentPage(Math.max(0, currentPage - 1))}
-                disabled={currentPage === 0}
-                title="Previous Page"
-                style={{
-                  background: 'rgba(255,255,255,0.2)',
-                  border: 'none',
-                  color: 'white',
-                  padding: '4px',
-                  borderRadius: '4px',
-                  cursor: currentPage === 0 ? 'not-allowed' : 'pointer',
-                  opacity: currentPage === 0 ? 0.5 : 1,
-                }}
-              >
-                <ChevronUp size={12} />
-              </button>
-              <button
-                onClick={() => setCurrentPage(Math.min(imageUrls.length - 1, currentPage + 1))}
-                disabled={currentPage === imageUrls.length - 1}
-                title="Next Page"
-                style={{
-                  background: 'rgba(255,255,255,0.2)',
-                  border: 'none',
-                  color: 'white',
-                  padding: '4px',
-                  borderRadius: '4px',
-                  cursor: currentPage === imageUrls.length - 1 ? 'not-allowed' : 'pointer',
-                  opacity: currentPage === imageUrls.length - 1 ? 0.5 : 1,
-                }}
-              >
-                <ChevronDown size={12} />
-              </button>
-            </>
-          )}
-          
           {/* Window Controls */}
           {isMaximized ? (
             <button
@@ -552,6 +515,93 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
           </button>
         </div>
       </div>
+
+
+      {/* Outer Left Sidebar (dummy) */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 56,
+          left: -56,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 8,
+          backgroundColor: '#ffffff',
+          border: '1px solid #dee2e6',
+          borderRight: 'none',
+          borderTopRightRadius: 8,
+          borderBottomRightRadius: 8,
+          padding: 6,
+          boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
+          zIndex: 200,
+        }}
+      >
+        <button title="High-light Text" style={{ width: 36, height: 36, borderRadius: 8, border: 'none', background: '#f8f9fa', color: '#495057', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Highlighter size={16} />
+        </button>
+        <button title="Add Comments/Notes" style={{ width: 36, height: 36, borderRadius: 8, border: 'none', background: '#f8f9fa', color: '#495057', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <MessageSquarePlus size={16} />
+        </button>
+        <button title="Underline or Strike-through" style={{ width: 36, height: 36, borderRadius: 8, border: 'none', background: '#f8f9fa', color: '#495057', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <UnderlineIcon size={16} />
+        </button>
+        <button title="Draw or Sketch" style={{ width: 36, height: 36, borderRadius: 8, border: 'none', background: '#f8f9fa', color: '#495057', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <PenTool size={16} />
+        </button>
+        <button title="Insert Shapes" style={{ width: 36, height: 36, borderRadius: 8, border: 'none', background: '#f8f9fa', color: '#495057', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Square size={16} />
+        </button>
+        <button title="Text Boxes" style={{ width: 36, height: 36, borderRadius: 8, border: 'none', background: '#f8f9fa', color: '#495057', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <TypeIcon size={16} />
+        </button>
+      </div>
+
+      {/* Resize handle (bottom-right) */}
+      {!isMaximized && !isMinimized && (
+        <div
+          onMouseDown={(e) => {
+            e.stopPropagation()
+            setIsResizing(true)
+            resizeStateRef.current = {
+              startX: e.clientX,
+              startY: e.clientY,
+              startW: size.width,
+              startH: size.height,
+            }
+            const onMove = (ev: MouseEvent) => {
+              const s = resizeStateRef.current
+              if (!s) return
+              const dx = ev.clientX - s.startX
+              const dy = ev.clientY - s.startY
+              const minW = 360
+              const minH = 240
+              const maxW = Math.max(minW, window.innerWidth - position.x - 20)
+              const maxH = Math.max(minH, window.innerHeight - position.y - 20)
+              const nextW = Math.min(maxW, Math.max(minW, s.startW + dx))
+              const nextH = Math.min(maxH, Math.max(minH, s.startH + dy))
+              setSize({ width: nextW, height: nextH })
+            }
+            const onUp = () => {
+              setIsResizing(false)
+              resizeStateRef.current = null
+              document.removeEventListener('mousemove', onMove)
+              document.removeEventListener('mouseup', onUp)
+            }
+            document.addEventListener('mousemove', onMove)
+            document.addEventListener('mouseup', onUp)
+          }}
+          style={{
+            position: 'absolute',
+            right: 0,
+            bottom: 0,
+            width: 16,
+            height: 16,
+            cursor: 'se-resize',
+            background: 'linear-gradient(135deg, transparent 0%, transparent 50%, rgba(0,123,255,0.5) 50%, rgba(0,123,255,0.8) 100%)'
+          }}
+          title="Resize"
+        />
+      )}
 
       {/* Search Bar */}
       {showSearch && (
@@ -669,16 +719,24 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
 
         {/* PDF Content */}
         <div
+          ref={scrollerRef}
+          onWheel={isPdfMode ? undefined : handleWheel}
           style={{
             flex: 1,
-            overflow: 'auto',
-            padding: '16px',
+            overflow: isPdfMode ? 'hidden' : 'auto',
+            padding: isPdfMode ? 0 : '16px',
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
+            alignItems: 'flex-start',
+            justifyContent: 'flex-start',
           }}
-        >
-          {imageUrls.length === 0 ? (
+>
+          {isPdfMode ? (
+            <iframe
+              src={resolvedPdfUrl!}
+              title="PDF Document"
+              style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }}
+            />
+          ) : imageUrls.length === 0 ? (
             <div
               style={{
                 display: 'flex',
@@ -700,9 +758,8 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
                 backgroundColor: 'white',
                 borderRadius: '4px',
                 boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
-                overflow: 'hidden',
-                maxWidth: '100%',
-                maxHeight: '100%',
+                display: 'inline-block',
+                position: 'relative'
               }}
             >
               <img
@@ -712,14 +769,75 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
                   width: `${zoomLevel}%`,
                   height: 'auto',
                   display: 'block',
+                  userSelect: 'none',
+                  pointerEvents: 'none',
                   transform: `rotate(${rotation}deg)`,
                   transition: 'transform 0.3s ease',
                 }}
+                onLoad={() => {
+                  const el = scrollerRef.current
+                  if (el) {
+                    if (pendingScrollRef.current === 'top') {
+                      el.scrollTop = 0
+                    } else if (pendingScrollRef.current === 'bottom') {
+                      el.scrollTop = el.scrollHeight
+                    }
+                  }
+                  pendingScrollRef.current = null
+                  setImgError(null)
+                  setPageReady(true)
+                }}
                 onError={(e) => {
-                  const target = e.target as HTMLImageElement
-                  target.style.display = 'none'
+                  // Keep the image in the DOM; log for debugging but do not hide it.
+                  console.error('Image failed to load for page', currentPage, imageUrls[currentPage], e)
+                  setImgError('Failed to load page image')
+                  setPageReady(false)
                 }}
               />
+
+              {/* Loading or Error Overlays */}
+              {!pageReady && !imgError && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    minWidth: 200,
+                    minHeight: 200,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: 'repeating-linear-gradient(45deg, #f8f9fa, #f8f9fa 10px, #ffffff 10px, #ffffff 20px)',
+                    color: '#6c757d',
+                    fontSize: 14,
+                    borderRadius: '4px'
+                  }}
+                >
+                  Loading page...
+                </div>
+              )}
+              {imgError && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    minWidth: 260,
+                    minHeight: 220,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: '#fff5f5',
+                    color: '#b00020',
+                    fontSize: 13,
+                    border: '1px solid #ffc9c9',
+                    borderRadius: '4px',
+                    padding: 12,
+                    textAlign: 'center'
+                  }}
+                >
+                  {imgError}. Please check the console logs for details.
+                </div>
+              )}
+
             </div>
           )}
         </div>
@@ -891,3 +1009,4 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
     </div>
   )
 }
+

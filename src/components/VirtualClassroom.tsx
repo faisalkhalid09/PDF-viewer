@@ -52,6 +52,8 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
     })
     setCurrentPdfSet(newIndex)
     setPdfViewerVisible(true) // Always show PDF viewer when adding new PDF
+
+    // Note: PdfViewer shape creation removed per request
   }
 
   const processFiles = async (files: FileList) => {
@@ -117,6 +119,8 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
             setPdfNames([processedFile.fileName])
             setCurrentPdfSet(0)
             setPdfViewerVisible(true)
+
+            // Note: PdfViewer shape creation removed per request
           } else {
             console.log('✅ Adding as additional PDF')
             handleAddPdfSet(processedFile.imageUrls, processedFile.fileName)
@@ -658,6 +662,8 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
             setPdfNames(['Sample PDF'])
             setCurrentPdfSet(0)
             setPdfViewerVisible(true)
+
+            // Note: PdfViewer shape creation removed per request
           }}
             style={{
               background: '#2563eb',

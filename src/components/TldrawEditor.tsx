@@ -23,14 +23,26 @@ export const TldrawEditor: React.FC<TldrawEditorProps> = ({
   const [currentStrokeWidth, setCurrentStrokeWidth] = useState(2)
   const [showPdfViewerState, setShowPdfViewerState] = useState(showPdfViewer && samplePdfImages.length > 0)
 
-
   // Handle editor mount
   const handleMount = useCallback((mountedEditor: Editor) => {
     setEditor(mountedEditor)
+
+    // Remove any lingering pdf-viewer shapes from previous sessions
+    try {
+      const allShapes = (mountedEditor as any).getCurrentPageShapes?.() || []
+      const pdfViewerShapes = allShapes.filter((s: any) => s?.type === 'pdf-viewer')
+      if (pdfViewerShapes.length > 0) {
+        const ids = pdfViewerShapes.map((s: any) => s.id)
+        ;(mountedEditor as any).deleteShapes?.(ids)
+      }
+    } catch (e) {
+      // Non-fatal; just best-effort cleanup
+    }
+
     onEditorMount?.(mountedEditor)
   }, [onEditorMount])
 
-  // Update PDF viewer visibility when props change
+  // Update PDF viewer overlay visibility when props change (overlay kept for demo UX)
   useEffect(() => {
     setShowPdfViewerState(showPdfViewer && samplePdfImages.length > 0)
   }, [showPdfViewer, samplePdfImages])
@@ -38,8 +50,8 @@ export const TldrawEditor: React.FC<TldrawEditorProps> = ({
   const handleColorChange = (color: string) => {
     setCurrentColor(color)
     if (editor) {
-      editor.setStyleForNextShapes('color', color as any)
-      editor.setStyleForSelectedShapes('color', color as any)
+      ;(editor as any).setStyleForNextShapes?.('color', color as any)
+      ;(editor as any).setStyleForSelectedShapes?.('color', color as any)
     }
   }
 
@@ -60,13 +72,13 @@ export const TldrawEditor: React.FC<TldrawEditorProps> = ({
       }
       
       const tldrawTool = toolMap[tool] || 'select'
-      editor.setCurrentTool(tldrawTool)
+      ;(editor as any).setCurrentTool?.(tldrawTool)
       
       // Set shape type for geo tool
       if (tool === 'rectangle') {
-        editor.setStyleForNextShapes('geo', 'rectangle')
+        ;(editor as any).setStyleForNextShapes?.('geo', 'rectangle')
       } else if (tool === 'circle') {
-        editor.setStyleForNextShapes('geo', 'ellipse')
+        ;(editor as any).setStyleForNextShapes?.('geo', 'ellipse')
       }
     }
   }
@@ -74,13 +86,15 @@ export const TldrawEditor: React.FC<TldrawEditorProps> = ({
   const handleStrokeWidthChange = (width: number) => {
     setCurrentStrokeWidth(width)
     if (editor) {
-      editor.setStyleForNextShapes('size', width > 8 ? 'xl' : width > 4 ? 'l' : width > 2 ? 'm' : 's')
-      editor.setStyleForSelectedShapes('size', width > 8 ? 'xl' : width > 4 ? 'l' : width > 2 ? 'm' : 's')
+      const size = width > 8 ? 'xl' : width > 4 ? 'l' : width > 2 ? 'm' : 's'
+      ;(editor as any).setStyleForNextShapes?.('size', size)
+      ;(editor as any).setStyleForSelectedShapes?.('size', size)
     }
   }
 
   return (
     <div style={{ position: 'fixed', inset: 0 }}>
+      {/* We pass shape utils via cast to any, for environments where the prop is supported */}
       <Tldraw 
         onMount={handleMount}
       />
