@@ -8,13 +8,13 @@ import {
   Printer,
   Download,
   BookOpen,
-  Search,
-  Highlighter,
-  MessageSquarePlus,
-  Underline as UnderlineIcon,
-  PenTool,
-  Type as TypeIcon
+  Search
 } from 'lucide-react'
+import { Document, Page } from 'react-pdf'
+import 'react-pdf/dist/Page/TextLayer.css'
+import 'react-pdf/dist/Page/AnnotationLayer.css'
+// Configure pdf.js worker once for react-pdf v10 (Vite)
+import '../pdf/setupPdfWorker'
 
 interface SimplePdfViewerProps {
   imageUrls: string[]
@@ -48,6 +48,18 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
   const pendingScrollRef = React.useRef<'top' | 'bottom' | null>(null)
   const [pageReady, setPageReady] = useState(false)
   const [imgError, setImgError] = useState<string | null>(null)
+  const [numPages, setNumPages] = useState<number>(0)
+
+  // Sidebar tool state and overlay for PDF mode
+  type Tool = 'none' | 'highlight' | 'comment' | 'underline' | 'strike' | 'draw' | 'shape' | 'text' | 'erase'
+  const [tool, setTool] = useState<Tool>('none')
+  const pdfPageRefs = React.useRef<Record<number, HTMLDivElement | null>>({})
+  const svgRefs = React.useRef<Record<number, SVGSVGElement | null>>({})
+  const [pageSizes, setPageSizes] = useState<Record<number, { w: number; h: number }>>({})
+  const [annots, setAnnots] = useState<Record<number, any[]>>({})
+  const drawingRef = React.useRef<{ page: number; kind: 'draw' | 'shape'; points: { x: number; y: number }[]; start?: { x: number; y: number } } | null>(null)
+  const [lastCreatedId, setLastCreatedId] = useState<string | null>(null)
+  const [penColor, setPenColor] = useState<string>('#111111')
 
   // Prefer explicit pdfUrl prop, or try to resolve from the first image URL via a global map set by the processor
   const resolvedPdfUrl: string | null = React.useMemo(() => {
@@ -56,11 +68,103 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
     try {
       const map = (window as any).__pdfUrlByFirstImageUrl as Record<string, string> | undefined
       if (first && map && map[first]) return map[first]
+      const lastUploaded = (window as any).__lastUploadedPdfUrl as string | undefined
+      if (lastUploaded) return lastUploaded
     } catch {}
     return null
   }, [pdfUrl, imageUrls])
 
   const isPdfMode = !!resolvedPdfUrl
+  useEffect(() => {
+    console.log('[PDF] resolvedPdfUrl?', !!resolvedPdfUrl, 'docKey:', (resolvedPdfUrl || imageUrls?.[0] || 'no-doc'))
+  }, [resolvedPdfUrl, imageUrls])
+
+  // Normalize file prop for react-pdf: use { data: base64 } for data URIs
+  const documentFile: any = React.useMemo(() => {
+    if (!resolvedPdfUrl) return undefined
+    const dataPrefix = 'data:application/pdf;base64,'
+    if (resolvedPdfUrl.startsWith(dataPrefix)) {
+      const raw = resolvedPdfUrl.slice(dataPrefix.length).replace(/\s+/g, '')
+      // Prefer Uint8Array for maximum compatibility across pdf.js versions
+      try {
+        const binary = atob(raw)
+        const len = binary.length
+        const bytes = new Uint8Array(len)
+        for (let i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i)
+        return { data: bytes }
+      } catch {
+        return { data: raw }
+      }
+    }
+    return resolvedPdfUrl
+  }, [resolvedPdfUrl])
+
+  // Persist annotations per document so switching PDFs keeps their own annotations
+  const docKey: string = React.useMemo(() => {
+    const key = resolvedPdfUrl || imageUrls?.[0] || 'no-doc'
+    return String(key)
+  }, [resolvedPdfUrl, imageUrls])
+  const annotsByDocRef = React.useRef<Record<string, Record<number, any[]>>>({})
+  const prevDocKeyRef = React.useRef<string | null>(null)
+
+  // Initialize from any saved global annotations (e.g., when loading a workspace)
+  useEffect(() => {
+    try {
+      const saved = (window as any).__pdfAnnotsByDoc as Record<string, Record<number, any[]>> | undefined
+      if (saved && typeof saved === 'object') {
+        annotsByDocRef.current = { ...saved }
+      }
+    } catch {}
+  }, [])
+
+  // When document changes, save current annots and load the target doc's annots
+  useEffect(() => {
+    const prev = prevDocKeyRef.current
+    if (prev) {
+      annotsByDocRef.current[prev] = annots
+      try {
+        (window as any).__pdfAnnotsByDoc = {
+          ...(window as any).__pdfAnnotsByDoc,
+          [prev]: annots
+        }
+      } catch {}
+    }
+    let nextAnnots = annotsByDocRef.current[docKey] || {}
+
+    // Migration: If switching to a new key (e.g., base64 data URL) and no annots exist under it,
+    // but there are annots under the first image key, copy them over so saved work reappears.
+    const firstImgKey = imageUrls?.[0]
+    if ((!nextAnnots || Object.keys(nextAnnots).length === 0) && firstImgKey && annotsByDocRef.current[firstImgKey]) {
+      try {
+        annotsByDocRef.current[docKey] = annotsByDocRef.current[firstImgKey]
+        ;(window as any).__pdfAnnotsByDoc = {
+          ...(window as any).__pdfAnnotsByDoc,
+          [docKey]: annotsByDocRef.current[firstImgKey]
+        }
+        nextAnnots = annotsByDocRef.current[docKey]
+      } catch {}
+    }
+
+    setAnnots(nextAnnots)
+    // Reset per-document derived state
+    setPageSizes({})
+    setCurrentPage(0)
+    setPageReady(false)
+    setImgError(null)
+    prevDocKeyRef.current = docKey
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [docKey])
+
+  // Keep cache updated when annots change
+  useEffect(() => {
+    annotsByDocRef.current[docKey] = annots
+    try {
+      (window as any).__pdfAnnotsByDoc = {
+        ...(window as any).__pdfAnnotsByDoc,
+        [docKey]: annots
+      }
+    } catch {}
+  }, [annots, docKey])
 
   const handleMaximize = () => {
     if (!isMaximized) {
@@ -242,35 +346,275 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
 
 
 
-  // Wheel scroll handler to change pages at top/bottom
-  const handleWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
-    if (e.ctrlKey || e.metaKey) return // don't hijack zoom gestures
-    const el = scrollerRef.current
-    if (!el || imageUrls.length <= 1) return
+  // Helpers for PDF overlay
+  const updateOverlaySizeFor = useCallback((page: number) => {
+    const el = pdfPageRefs.current[page]
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    setPageSizes(ps => ({ ...ps, [page]: { w: Math.max(1, Math.round(r.width)), h: Math.max(1, Math.round(r.height)) } }))
+  }, [])
 
-    const atTop = el.scrollTop <= 0
-    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 2
+  // Continuous scroll uses layout-based centering; overlay sizes update on each page render
 
-    if (e.deltaY > 0) {
-      // Scrolling down
-      if (atBottom || el.scrollHeight <= el.clientHeight) {
-        if (currentPage < imageUrls.length - 1) {
-          e.preventDefault()
-          pendingScrollRef.current = 'top'
-          setCurrentPage(p => Math.min(imageUrls.length - 1, p + 1))
+  const pctPoint = (page: number, clientX: number, clientY: number) => {
+    const el = pdfPageRefs.current[page]
+    if (!el) return { x: 0, y: 0 }
+    const box = el.getBoundingClientRect()
+    const x = (clientX - box.left) / box.width
+    const y = (clientY - box.top) / box.height
+    return { x: Math.min(1, Math.max(0, x)), y: Math.min(1, Math.max(0, y)) }
+  }
+
+  const handleSvgPointerDown = (page: number) => (e: React.PointerEvent<SVGSVGElement>) => {
+    // In PDF mode, let the text layer handle selection for highlight/underline
+    if (isPdfMode && (tool === 'highlight' || tool === 'underline')) {
+      return
+    }
+
+    // For drawing/erasing/placing items, prevent default and capture pointer
+    e.preventDefault()
+    e.stopPropagation()
+    try { (e.currentTarget as any).setPointerCapture?.(e.pointerId) } catch {}
+
+    // Erase tool: click to remove the top-most annotation under cursor
+    if (tool === 'erase') {
+      const removed = eraseAt(page, e.clientX, e.clientY)
+      return
+    }
+
+    if (tool === 'draw') {
+      const p = pctPoint(page, e.clientX, e.clientY)
+      drawingRef.current = { page, kind: 'draw', points: [p] }
+    } else if (tool === 'shape') {
+      const p = pctPoint(page, e.clientX, e.clientY)
+      drawingRef.current = { page, kind: 'shape', points: [], start: p }
+    } else if (tool === 'text' || tool === 'comment') {
+      const p = pctPoint(page, e.clientX, e.clientY)
+      const id = `txt-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      setAnnots(prev => ({
+        ...prev,
+        [page]: [
+          ...(prev[page] || []),
+          { id, type: tool === 'text' ? 'text' : 'note', x: p.x, y: p.y, content: tool === 'text' ? 'Text' : 'Note' }
+        ]
+      }))
+      setLastCreatedId(id)
+    }
+  }
+
+  const handleSvgPointerMove = (page: number) => (e: React.PointerEvent<SVGSVGElement>) => {
+    const d = drawingRef.current
+    if (!d || d.page !== page) return
+    if (d.kind === 'draw') {
+      d.points.push(pctPoint(page, e.clientX, e.clientY))
+      // force re-render by updating sizes state
+      setPageSizes(ps => ({ ...ps }))
+    } else if (d.kind === 'shape') {
+      const p = pctPoint(page, e.clientX, e.clientY)
+      // keep only the latest point as the current cursor
+      d.points = [p]
+      setPageSizes(ps => ({ ...ps }))
+    }
+  }
+
+  const handleSvgPointerUp = (page: number) => () => {
+    const d = drawingRef.current
+    if (!d || d.page !== page) return
+    if (d.kind === 'draw' && d.points.length > 1) {
+      const id = `stk-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      setAnnots(prev => ({ ...prev, [page]: [ ...(prev[page]||[]), { id, type: 'stroke', path: d.points, color: penColor } ] }))
+    } else if (d.kind === 'shape' && d.start) {
+      const last = d.points[d.points.length - 1]
+      const end = last || d.start
+      const x1 = Math.min(d.start.x, end.x)
+      const y1 = Math.min(d.start.y, end.y)
+      const w = Math.abs(end.x - d.start.x)
+      const h = Math.abs(end.y - d.start.y)
+      const id = `rect-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      setAnnots(prev => ({ ...prev, [page]: [ ...(prev[page]||[]), { id, type: 'rect', x: x1, y: y1, w, h } ] }))
+    }
+    drawingRef.current = null
+  }
+
+  // Simple hit-test and erase logic
+  const eraseAt = (page: number, clientX: number, clientY: number): boolean => {
+    const size = pageSizes[page]
+    const el = pdfPageRefs.current[page]
+    if (!size || !el) return false
+    const box = el.getBoundingClientRect()
+    const px = clientX - box.left
+    const py = clientY - box.top
+
+    const items = annots[page] || []
+    let removed = false
+    const hitT = 8 // px tolerance
+
+    // traverse from top-most to bottom
+    for (let i = items.length - 1; i >= 0; i--) {
+      const a = items[i]
+      if (a.type === 'rect' || a.type === 'highlight') {
+        const x = a.x * size.w
+        const y = a.y * size.h
+        const w = a.w * size.w
+        const h = a.h * size.h
+        if (px >= x && px <= x + w && py >= y && py <= y + h) {
+          setAnnots(prev => ({ ...prev, [page]: items.filter((_, idx) => idx !== i) }))
+          removed = true
+          break
         }
-      }
-    } else if (e.deltaY < 0) {
-      // Scrolling up
-      if (atTop || el.scrollHeight <= el.clientHeight) {
-        if (currentPage > 0) {
-          e.preventDefault()
-          pendingScrollRef.current = 'bottom'
-          setCurrentPage(p => Math.max(0, p - 1))
+      } else if (a.type === 'underline') {
+        const x = a.x * size.w
+        const y = (a.y + a.h) * size.h
+        const w = a.w * size.w
+        if (px >= x && px <= x + w && Math.abs(py - y) <= hitT) {
+          setAnnots(prev => ({ ...prev, [page]: items.filter((_, idx) => idx !== i) }))
+          removed = true
+          break
+        }
+      } else if (a.type === 'strike') {
+        const x = a.x * size.w
+        const y = (a.y + a.h / 2) * size.h
+        const w = a.w * size.w
+        if (px >= x && px <= x + w && Math.abs(py - y) <= hitT) {
+          setAnnots(prev => ({ ...prev, [page]: items.filter((_, idx) => idx !== i) }))
+          removed = true
+          break
+        }
+      } else if (a.type === 'stroke' && Array.isArray(a.path) && a.path.length) {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+        a.path.forEach((p: any) => {
+          const X = p.x * size.w, Y = p.y * size.h
+          if (X < minX) minX = X
+          if (Y < minY) minY = Y
+          if (X > maxX) maxX = X
+          if (Y > maxY) maxY = Y
+        })
+        if (px >= minX - hitT && px <= maxX + hitT && py >= minY - hitT && py <= maxY + hitT) {
+          setAnnots(prev => ({ ...prev, [page]: items.filter((_, idx) => idx !== i) }))
+          removed = true
+          break
         }
       }
     }
-  }, [currentPage, imageUrls.length])
+    return removed
+  }
+
+  // Capture selection rectangles for highlight/underline/strike
+  useEffect(() => {
+    if (!isPdfMode) return
+    const onUp = () => {
+      if (!(tool === 'highlight' || tool === 'underline' || tool === 'strike')) return
+      const sel = window.getSelection()
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return
+      const range = sel.getRangeAt(0)
+      const rects = Array.from(range.getClientRects())
+      if (!rects.length) return
+
+      const toAddByPage: Record<number, any[]> = {}
+      rects.forEach(r => {
+        Object.entries(pdfPageRefs.current).forEach(([k, el]) => {
+          const page = Number(k)
+          if (!el) return
+          const box = el.getBoundingClientRect()
+          const left = Math.max(box.left, r.left)
+          const top = Math.max(box.top, r.top)
+          const right = Math.min(box.right, r.right)
+          const bottom = Math.min(box.bottom, r.bottom)
+          const w = right - left
+          const h = bottom - top
+          if (w > 2 && h > 1) {
+            const item = { x: (left - box.left) / box.width, y: (top - box.top) / box.height, w: w / box.width, h: h / box.height }
+            const idPrefix = tool === 'highlight' ? 'hl' : tool === 'underline' ? 'ul' : 'st'
+            const newItem = { id: `${idPrefix}-${Date.now()}-${Math.random()}`, type: tool, ...item }
+            if (!toAddByPage[page]) toAddByPage[page] = []
+            toAddByPage[page].push(newItem)
+          }
+        })
+      })
+
+      if (Object.keys(toAddByPage).length) {
+        setAnnots(prev => {
+          const next = { ...prev }
+          for (const [pageStr, items] of Object.entries(toAddByPage)) {
+            const page = Number(pageStr)
+            next[page] = [ ...(next[page] || []), ...(items as any[]) ]
+          }
+          return next
+        })
+      }
+    }
+    document.addEventListener('mouseup', onUp)
+    return () => document.removeEventListener('mouseup', onUp)
+  }, [tool, isPdfMode])
+
+  // Focus newly created text/note immediately for editing
+  useEffect(() => {
+    if (!lastCreatedId) return
+    const el = document.querySelector(`[data-annot-id="${lastCreatedId}"]`) as HTMLElement | null
+    if (el) {
+      el.focus()
+      const sel = window.getSelection()
+      if (sel) {
+        const range = document.createRange()
+        range.selectNodeContents(el)
+        sel.removeAllRanges()
+        sel.addRange(range)
+      }
+    }
+    setLastCreatedId(null)
+  }, [lastCreatedId])
+
+  // Bridge: listen for external tool changes coming from the global bottom toolbar
+  useEffect(() => {
+    const onSetTool = (e: Event) => {
+      const ce = e as CustomEvent
+      const t = ce?.detail?.tool as Tool | undefined
+      if (!t) return
+      setTool(t)
+    }
+    window.addEventListener('pdf-set-tool', onSetTool as EventListener)
+    return () => {
+      window.removeEventListener('pdf-set-tool', onSetTool as EventListener)
+    }
+  }, [])
+
+  // Listen for color changes from the global color sidebar
+  useEffect(() => {
+    const onSetColor = (e: Event) => {
+      const ce = e as CustomEvent
+      const c = ce?.detail?.color as string | undefined
+      if (!c) return
+      setPenColor(c)
+    }
+    window.addEventListener('pdf-set-color', onSetColor as EventListener)
+    return () => window.removeEventListener('pdf-set-color', onSetColor as EventListener)
+  }, [])
+
+  // Wheel handling via native listener (passive:false) to intercept Ctrl+wheel and avoid browser zoom
+  useEffect(() => {
+    const el = scrollerRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault()
+        const step = 10
+        setZoomLevel(prev => Math.min(300, Math.max(25, prev + (e.deltaY < 0 ? step : -step))))
+      }
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => {
+      el.removeEventListener('wheel', onWheel as EventListener)
+    }
+  }, [])
+
+  // Keep overlay size in sync for image mode when zoom/rotation/page changes
+  useEffect(() => {
+    if (isPdfMode) return
+    const id = requestAnimationFrame(() => {
+      try { updateOverlaySizeFor(currentPage) } catch {}
+    })
+    return () => cancelAnimationFrame(id)
+  }, [zoomLevel, rotation, currentPage, isPdfMode])
 
   if (isMinimized) {
     return (
@@ -369,11 +713,11 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
           <span style={{ fontSize: '14px', fontWeight: '500' }}>
             PDF Viewer
           </span>
-          {imageUrls.length > 1 && (
+          {(() => { const pageCount = isPdfMode ? (numPages || imageUrls.length) : imageUrls.length; return pageCount > 1 ? (
             <span style={{ fontSize: '12px', opacity: 0.8 }}>
-              Page {currentPage + 1} of {imageUrls.length}
+              Page {currentPage + 1} of {pageCount}
             </span>
-          )}
+          ) : null })()}
           <span style={{ fontSize: '11px', opacity: 0.7 }}>
             {zoomLevel}%
           </span>
@@ -517,44 +861,6 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
       </div>
 
 
-      {/* Outer Left Sidebar (dummy) */}
-      <div
-        style={{
-          position: 'absolute',
-          top: 56,
-          left: -56,
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 8,
-          backgroundColor: '#ffffff',
-          border: '1px solid #dee2e6',
-          borderRight: 'none',
-          borderTopRightRadius: 8,
-          borderBottomRightRadius: 8,
-          padding: 6,
-          boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
-          zIndex: 200,
-        }}
-      >
-        <button title="High-light Text" style={{ width: 36, height: 36, borderRadius: 8, border: 'none', background: '#f8f9fa', color: '#495057', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Highlighter size={16} />
-        </button>
-        <button title="Add Comments/Notes" style={{ width: 36, height: 36, borderRadius: 8, border: 'none', background: '#f8f9fa', color: '#495057', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <MessageSquarePlus size={16} />
-        </button>
-        <button title="Underline or Strike-through" style={{ width: 36, height: 36, borderRadius: 8, border: 'none', background: '#f8f9fa', color: '#495057', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <UnderlineIcon size={16} />
-        </button>
-        <button title="Draw or Sketch" style={{ width: 36, height: 36, borderRadius: 8, border: 'none', background: '#f8f9fa', color: '#495057', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <PenTool size={16} />
-        </button>
-        <button title="Insert Shapes" style={{ width: 36, height: 36, borderRadius: 8, border: 'none', background: '#f8f9fa', color: '#495057', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Square size={16} />
-        </button>
-        <button title="Text Boxes" style={{ width: 36, height: 36, borderRadius: 8, border: 'none', background: '#f8f9fa', color: '#495057', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <TypeIcon size={16} />
-        </button>
-      </div>
 
       {/* Resize handle (bottom-right) */}
       {!isMaximized && !isMinimized && (
@@ -597,7 +903,8 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
             width: 16,
             height: 16,
             cursor: 'se-resize',
-            background: 'linear-gradient(135deg, transparent 0%, transparent 50%, rgba(0,123,255,0.5) 50%, rgba(0,123,255,0.8) 100%)'
+            background: 'linear-gradient(135deg, transparent 0%, transparent 50%, rgba(0,123,255,0.5) 50%, rgba(0,123,255,0.8) 100%)',
+            zIndex: 500
           }}
           title="Resize"
         />
@@ -666,10 +973,10 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
               Thumbnails
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {imageUrls.map((url, index) => (
+          {imageUrls.map((url, index) => (
                 <div
                   key={index}
-                  onClick={() => setCurrentPage(index)}
+                  onClick={() => { if (isPdfMode) { const el = pdfPageRefs.current[index]; el?.scrollIntoView({ behavior: 'smooth', block: 'start' }); } setCurrentPage(index) }}
                   style={{
                     cursor: 'pointer',
                     border: currentPage === index ? '2px solid #007bff' : '1px solid #dee2e6',
@@ -720,22 +1027,90 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
         {/* PDF Content */}
         <div
           ref={scrollerRef}
-          onWheel={isPdfMode ? undefined : handleWheel}
+          onScroll={() => {
+            const scroller = scrollerRef.current
+            if (!scroller || !isPdfMode) return
+            const scrollerRect = scroller.getBoundingClientRect()
+            let bestIndex = 0
+            let bestScore = Number.POSITIVE_INFINITY
+            Object.entries(pdfPageRefs.current).forEach(([k, el]) => {
+              const index = Number(k)
+              if (!el) return
+              const rect = el.getBoundingClientRect()
+              const scrollerMidY = (scrollerRect.top + scrollerRect.bottom) / 2
+              const pageMidY = (rect.top + rect.bottom) / 2
+              const score = Math.abs(pageMidY - scrollerMidY)
+              if (score < bestScore) { bestScore = score; bestIndex = index }
+            })
+            setCurrentPage(bestIndex)
+          }}
           style={{
             flex: 1,
-            overflow: isPdfMode ? 'hidden' : 'auto',
-            padding: isPdfMode ? 0 : '16px',
+            overflow: 'auto',
+            padding: '16px',
             display: 'flex',
-            alignItems: 'flex-start',
+            flexDirection: 'column',
+            alignItems: 'center',
             justifyContent: 'flex-start',
+            gap: '16px',
           }}
 >
           {isPdfMode ? (
-            <iframe
-              src={resolvedPdfUrl!}
-              title="PDF Document"
-              style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }}
-            />
+            <Document file={documentFile!} onLoadSuccess={({ numPages }) => { console.log('[PDF] onLoadSuccess pages:', numPages); setNumPages(numPages)} } onLoadError={(e:any)=>{console.error('PDF load error:', e)}} loading={<div style={{ padding: 24 }}>Loading PDF…</div>}>
+              {Array.from({ length: numPages || 0 }, (_, index) => (
+                <div
+                  key={index}
+                  ref={(el) => { pdfPageRefs.current[index] = el }}
+                  onDragStart={(e) => e.preventDefault()}
+                  style={{ position: 'relative', margin: '16px 0', background: 'white', borderRadius: 4, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}
+                >
+                  <Page pageNumber={index + 1} scale={zoomLevel / 100} rotate={rotation} renderTextLayer renderAnnotationLayer={false} onRenderSuccess={() => updateOverlaySizeFor(index)} />
+                  {/* SVG Overlay for annotations */}
+                  <svg
+                    ref={(el) => { svgRefs.current[index] = el as SVGSVGElement | null }}
+                    onPointerDown={handleSvgPointerDown(index)}
+                    onPointerMove={handleSvgPointerMove(index)}
+                    onPointerUp={handleSvgPointerUp(index)}
+                    style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', zIndex: 10, pointerEvents: (tool==='draw'||tool==='shape'||tool==='text'||tool==='comment'||tool==='erase') ? 'auto' : 'none', cursor: (tool==='draw'||tool==='shape') ? 'crosshair' : (tool==='text'||tool==='comment') ? 'text' : (tool==='erase') ? 'not-allowed' : 'default', touchAction: 'none' }}
+                  >
+                    {(annots[index] || []).filter(a => a.type==='stroke').map(a => (
+                      <polyline key={a.id} fill="none" stroke={a.color || '#111111'} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" points={a.path.map((p: any) => `${p.x*(pageSizes[index]?.w||0)},${p.y*(pageSizes[index]?.h||0)}`).join(' ')} />
+                    ))}
+                    {(annots[index] || []).filter(a => a.type==='rect').map(a => (
+                      <rect key={a.id} x={a.x*(pageSizes[index]?.w||0)} y={a.y*(pageSizes[index]?.h||0)} width={a.w*(pageSizes[index]?.w||0)} height={a.h*(pageSizes[index]?.h||0)} stroke="#2563eb" strokeWidth={2} fill="none" />
+                    ))}
+                    {(annots[index] || []).filter(a => a.type==='highlight').map(a => (
+                      <rect key={a.id} x={a.x*(pageSizes[index]?.w||0)} y={a.y*(pageSizes[index]?.h||0)} width={a.w*(pageSizes[index]?.w||0)} height={a.h*(pageSizes[index]?.h||0)} fill="rgba(255,235,59,0.4)" />
+                    ))}
+                    {(annots[index] || []).filter(a => a.type==='underline').map(a => (
+                      <line key={a.id} x1={a.x*(pageSizes[index]?.w||0)} x2={(a.x+a.w)*(pageSizes[index]?.w||0)} y1={(a.y+a.h)*(pageSizes[index]?.h||0) - 2} y2={(a.y+a.h)*(pageSizes[index]?.h||0) - 2} stroke="#111" strokeWidth={2} />
+                    ))}
+                    {(annots[index] || []).filter(a => a.type==='strike').map(a => (
+                      <line key={a.id} x1={a.x*(pageSizes[index]?.w||0)} x2={(a.x+a.w)*(pageSizes[index]?.w||0)} y1={a.y*(pageSizes[index]?.h||0) + ((a.h*(pageSizes[index]?.h||0))/2)} y2={a.y*(pageSizes[index]?.h||0) + ((a.h*(pageSizes[index]?.h||0))/2)} stroke="#111" strokeWidth={2} />
+                    ))}
+                    {/* live draw preview while dragging */}
+                    {drawingRef.current && drawingRef.current.page===index && drawingRef.current.kind==='draw' && drawingRef.current.points.length>0 && (
+                      <polyline fill="none" stroke={penColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" points={drawingRef.current.points.map((p: any) => `${p.x*(pageSizes[index]?.w||0)},${p.y*(pageSizes[index]?.h||0)}`).join(' ')} />
+                    )}
+                    {/* live shape preview while dragging */}
+                    {drawingRef.current && drawingRef.current.page===index && drawingRef.current.kind==='shape' && drawingRef.current.start && (
+                      (() => { const start = drawingRef.current!.start!; const last = (drawingRef.current!.points[0]) || start; const W = pageSizes[index]?.w || 0; const H = pageSizes[index]?.h || 0; const x=Math.min(start.x,last.x)*W; const y=Math.min(start.y,last.y)*H; const w=Math.abs(last.x-start.x)*W; const h=Math.abs(last.y-start.y)*H; return <rect x={x} y={y} width={w} height={h} stroke="#2563eb" strokeDasharray="4 3" fill="none" /> })()
+                    )}
+                  </svg>
+                  {/* Text and Notes overlays */}
+                  {(annots[index] || []).filter(a => a.type==='text' || a.type==='note').map(a => {
+                    const W = pageSizes[index]?.w || 0; const H = pageSizes[index]?.h || 0; const left = a.x*W; const top = a.y*H; const style: React.CSSProperties = a.type==='note' ? { position:'absolute', left, top, background:'#fff3bf', border:'1px solid #ffe066', borderRadius:6, padding:6, minWidth:80, boxShadow:'0 1px 4px rgba(0,0,0,0.2)', fontSize:12, cursor: tool==='erase' ? 'not-allowed' : 'text', zIndex: 20 } : { position:'absolute', left, top, background:'#fff', border:'1px solid #dee2e6', borderRadius:6, padding:6, minWidth:80, boxShadow:'0 1px 4px rgba(0,0,0,0.2)', fontSize:12, cursor: tool==='erase' ? 'not-allowed' : 'text', zIndex: 20 }
+                    return (
+                      <div key={a.id} data-annot-id={a.id} contentEditable suppressContentEditableWarning style={style} onMouseDown={(e)=>{
+                        if (tool==='erase') { e.preventDefault(); e.stopPropagation(); setAnnots(prev=>({ ...prev, [index]: (prev[index]||[]).filter(it=> it.id!==a.id) })); }
+                      }} onBlur={(e)=>{
+                        const text = (e.target as HTMLDivElement).innerText; setAnnots(prev=>({ ...prev, [index]: (prev[index]||[]).map(it=> it.id===a.id ? { ...it, content:text } : it) }))
+                      }}>{a.content}</div>
+                    )
+                  })}
+                </div>
+              ))}
+            </Document>
           ) : imageUrls.length === 0 ? (
             <div
               style={{
@@ -754,6 +1129,7 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
             </div>
           ) : (
             <div
+              ref={(el) => { pdfPageRefs.current[currentPage] = el }}
               style={{
                 backgroundColor: 'white',
                 borderRadius: '4px',
@@ -786,6 +1162,8 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
                   pendingScrollRef.current = null
                   setImgError(null)
                   setPageReady(true)
+                  // Update overlay size for image mode
+                  try { updateOverlaySizeFor(currentPage) } catch {}
                 }}
                 onError={(e) => {
                   // Keep the image in the DOM; log for debugging but do not hide it.
@@ -794,6 +1172,48 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
                   setPageReady(false)
                 }}
               />
+
+              {/* SVG Overlay for annotations in image mode */}
+              <svg
+                ref={(el) => { svgRefs.current[currentPage] = el as SVGSVGElement | null }}
+                onPointerDown={handleSvgPointerDown(currentPage)}
+                onPointerMove={handleSvgPointerMove(currentPage)}
+                onPointerUp={handleSvgPointerUp(currentPage)}
+                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', zIndex: 10, pointerEvents: (tool==='draw'||tool==='shape'||tool==='text'||tool==='comment'||tool==='erase') ? 'auto' : 'none', cursor: (tool==='draw'||tool==='shape') ? 'crosshair' : (tool==='text'||tool==='comment') ? 'text' : (tool==='erase') ? 'not-allowed' : 'default', touchAction: 'none' }}
+              >
+                {(annots[currentPage] || []).filter(a => a.type==='stroke').map(a => (
+                  <polyline key={a.id} fill="none" stroke={a.color || '#111111'} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" points={a.path.map((p: any) => `${p.x*(pageSizes[currentPage]?.w||0)},${p.y*(pageSizes[currentPage]?.h||0)}`).join(' ')} />
+                ))}
+                {(annots[currentPage] || []).filter(a => a.type==='rect').map(a => (
+                  <rect key={a.id} x={a.x*(pageSizes[currentPage]?.w||0)} y={a.y*(pageSizes[currentPage]?.h||0)} width={a.w*(pageSizes[currentPage]?.w||0)} height={a.h*(pageSizes[currentPage]?.h||0)} stroke="#2563eb" strokeWidth={2} fill="none" />
+                ))}
+                {(annots[currentPage] || []).filter(a => a.type==='highlight').map(a => (
+                  <rect key={a.id} x={a.x*(pageSizes[currentPage]?.w||0)} y={a.y*(pageSizes[currentPage]?.h||0)} width={a.w*(pageSizes[currentPage]?.w||0)} height={a.h*(pageSizes[currentPage]?.h||0)} fill="rgba(255,235,59,0.4)" />
+                ))}
+                {(annots[currentPage] || []).filter(a => a.type==='underline').map(a => (
+                  <line key={a.id} x1={a.x*(pageSizes[currentPage]?.w||0)} x2={(a.x+a.w)*(pageSizes[currentPage]?.w||0)} y1={(a.y+a.h)*(pageSizes[currentPage]?.h||0) - 2} y2={(a.y+a.h)*(pageSizes[currentPage]?.h||0) - 2} stroke="#111" strokeWidth={2} />
+                ))}
+                {/* live draw preview while dragging */}
+                {drawingRef.current && drawingRef.current.page===currentPage && drawingRef.current.kind==='draw' && drawingRef.current.points.length>0 && (
+                  <polyline fill="none" stroke={penColor} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" points={drawingRef.current.points.map((p: any) => `${p.x*(pageSizes[currentPage]?.w||0)},${p.y*(pageSizes[currentPage]?.h||0)}`).join(' ')} />
+                )}
+                {/* live shape preview while dragging */}
+                {drawingRef.current && drawingRef.current.page===currentPage && drawingRef.current.kind==='shape' && drawingRef.current.start && (
+                  (() => { const start = drawingRef.current!.start!; const last = (drawingRef.current!.points[0]) || start; const W = pageSizes[currentPage]?.w || 0; const H = pageSizes[currentPage]?.h || 0; const x=Math.min(start.x,last.x)*W; const y=Math.min(start.y,last.y)*H; const w=Math.abs(last.x-start.x)*W; const h=Math.abs(last.y-start.y)*H; return <rect x={x} y={y} width={w} height={h} stroke="#2563eb" strokeDasharray="4 3" fill="none" /> })()
+                )}
+              </svg>
+
+              {/* Text and Notes overlays for image mode */}
+              {(annots[currentPage] || []).filter(a => a.type==='text' || a.type==='note').map(a => {
+                const W = pageSizes[currentPage]?.w || 0; const H = pageSizes[currentPage]?.h || 0; const left = a.x*W; const top = a.y*H; const style: React.CSSProperties = a.type==='note' ? { position:'absolute', left, top, background:'#fff3bf', border:'1px solid #ffe066', borderRadius:6, padding:6, minWidth:80, boxShadow:'0 1px 4px rgba(0,0,0,0.2)', fontSize:12, cursor: tool==='erase' ? 'not-allowed' : 'text', zIndex: 20 } : { position:'absolute', left, top, background:'#fff', border:'1px solid #dee2e6', borderRadius:6, padding:6, minWidth:80, boxShadow:'0 1px 4px rgba(0,0,0,0.2)', fontSize:12, cursor: tool==='erase' ? 'not-allowed' : 'text', zIndex: 20 }
+                return (
+                  <div key={a.id} data-annot-id={a.id} contentEditable suppressContentEditableWarning style={style} onMouseDown={(e)=>{
+                    if (tool==='erase') { e.preventDefault(); e.stopPropagation(); setAnnots(prev=>({ ...prev, [currentPage]: (prev[currentPage]||[]).filter(it=> it.id!==a.id) })); }
+                  }} onBlur={(e)=>{
+                    const text = (e.target as HTMLDivElement).innerText; setAnnots(prev=>({ ...prev, [currentPage]: (prev[currentPage]||[]).map(it=> it.id===a.id ? { ...it, content:text } : it) }))
+                  }}>{a.content}</div>
+                )
+              })}
 
               {/* Loading or Error Overlays */}
               {!pageReady && !imgError && (
@@ -842,6 +1262,7 @@ export const SimplePdfViewer: React.FC<SimplePdfViewerProps> = ({
           )}
         </div>
       </div>
+
 
       {/* Help Dialog */}
       {showHelp && (

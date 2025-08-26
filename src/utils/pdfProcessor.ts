@@ -347,12 +347,12 @@ async function renderPdfPage(pdf: any, pageNum: number): Promise<string | null> 
 
     await page.render(renderContext).promise
 
-    // Try multiple encoding strategies with decode verification
+    // Prefer data URLs first so saved workspaces have serializable image URLs
     const attempts: Array<{ kind: 'blob' | 'data'; format: 'image/jpeg' | 'image/png'; quality?: number }> = [
-      { kind: 'blob', format: 'image/jpeg', quality: 0.85 },
-      { kind: 'blob', format: 'image/png' },
       { kind: 'data', format: 'image/jpeg', quality: 0.85 },
       { kind: 'data', format: 'image/png' },
+      { kind: 'blob', format: 'image/jpeg', quality: 0.85 },
+      { kind: 'blob', format: 'image/png' },
     ]
 
     for (const attempt of attempts) {

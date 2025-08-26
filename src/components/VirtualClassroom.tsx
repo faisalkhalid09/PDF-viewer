@@ -23,15 +23,15 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
   const [isProcessing, setIsProcessing] = useState(false)
   const [processingStatus, setProcessingStatus] = useState('')
   const [processingError, setProcessingError] = useState('')
-  const [isDragOver, setIsDragOver] = useState(false)
   const [showColorSidebar, setShowColorSidebar] = useState(false)
   const [showPdfDropdown, setShowPdfDropdown] = useState(false)
   const [pdfViewerVisible, setPdfViewerVisible] = useState(initialPdfImages.length > 0)
   const [editorInstance, setEditorInstance] = useState<Editor | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const pdfDropdownRef = useRef<HTMLDivElement>(null)
+  const [pdfBase64s, setPdfBase64s] = useState<(string | null)[]>(initialPdfImages.length > 0 ? [null] : [])
 
-  const handleAddPdfSet = (imageUrls: string[], fileName: string) => {
+  const handleAddPdfSet = (imageUrls: string[], fileName: string, pdfBase64?: string | null) => {
     const newIndex = pdfImageSets.length
     console.log('📥 handleAddPdfSet called:', {
       fileName,
@@ -48,6 +48,10 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
     setPdfNames(prev => {
       const updated = [...prev, fileName]
       console.log('📂 Updated pdfNames:', updated)
+      return updated
+    })
+    setPdfBase64s(prev => {
+      const updated = [...prev, pdfBase64 ?? null]
       return updated
     })
     setCurrentPdfSet(newIndex)
@@ -95,6 +99,23 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
       }
 
       // Add each processed file as a separate PDF set
+      // helper: convert blob URL to base64
+      const toBase64 = async (url: string): Promise<string> => {
+        const res = await fetch(url)
+        const blob = await res.blob()
+        const reader = new FileReader()
+        const p = new Promise<string>((resolve, reject) => {
+          reader.onload = () => {
+            const dataUrl = reader.result as string
+            const base64 = dataUrl.split(',')[1] || ''
+            resolve(base64)
+          }
+          reader.onerror = () => reject(new Error('Failed to read blob'))
+        })
+        reader.readAsDataURL(blob)
+        return p
+      }
+
       for (const processedFile of processedFiles) {
         currentFileIndex++
         
@@ -113,17 +134,19 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
             currentPdfNamesLength: pdfNames.length
           })
           
+          const b64 = processedFile.pdfUrl ? await toBase64(processedFile.pdfUrl) : null
           if (pdfImageSets.length === 0 || (pdfImageSets.length === 1 && pdfImageSets[0].length === 0)) {
             console.log('✅ Adding as first PDF')
             setPdfImageSets([processedFile.imageUrls])
             setPdfNames([processedFile.fileName])
+            setPdfBase64s([b64])
             setCurrentPdfSet(0)
             setPdfViewerVisible(true)
 
             // Note: PdfViewer shape creation removed per request
           } else {
             console.log('✅ Adding as additional PDF')
-            handleAddPdfSet(processedFile.imageUrls, processedFile.fileName)
+            handleAddPdfSet(processedFile.imageUrls, processedFile.fileName, b64)
           }
           
           // Show success message longer for large PDFs
@@ -160,56 +183,6 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
     }
   }
 
-  // Drag and drop handlers
-  const handleDragEnter = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragOver(true)
-  }, [])
-
-  const handleDragLeave = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    // Only hide if leaving the main container
-    if (e.currentTarget === e.target) {
-      setIsDragOver(false)
-    }
-  }, [])
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-  }, [])
-
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragOver(false)
-
-    const files = e.dataTransfer.files
-    if (files && files.length > 0) {
-      // Filter supported files
-      const supportedFiles = Array.from(files).filter(isFileSupported)
-      
-      if (supportedFiles.length === 0) {
-        setProcessingError('No supported files found. Please drop PDF or image files.')
-        return
-      }
-
-      // Convert back to FileList-like object
-      const fileList = {
-        length: supportedFiles.length,
-        item: (index: number) => supportedFiles[index] || null,
-        [Symbol.iterator]: function* () {
-          for (let i = 0; i < supportedFiles.length; i++) {
-            yield supportedFiles[i]
-          }
-        }
-      } as FileList
-
-      await processFiles(fileList)
-    }
-  }, [])
 
   // Close PDF dropdown when clicking outside
   useEffect(() => {
@@ -236,11 +209,52 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
       }
 
       const snapshot = editorInstance.store.getSnapshot()
+      console.log('[Workspace] Saving snapshot with keys:', Object.keys(snapshot || {}))
+
+      const toDataUrl = async (url: string): Promise<string> => {
+        try {
+          if (url.startsWith('data:')) return url
+          if (url.startsWith('blob:')) {
+            const res = await fetch(url)
+            const blob = await res.blob()
+            const reader = new FileReader()
+            const p = new Promise<string>((resolve, reject) => {
+              reader.onload = () => resolve(reader.result as string)
+              reader.onerror = () => reject(new Error('Failed to convert blob URL to data URL'))
+            })
+            reader.readAsDataURL(blob)
+            return await p
+          }
+          // For http(s) we keep the URL as-is (may be CORS-protected). Optionally attempt data URL.
+          return url
+        } catch (err) {
+          console.warn('[Workspace] Failed to serialize URL, keeping as-is:', url, err)
+          return url
+        }
+      }
+
+      // Serialize image sets into stable URLs
+      const serializableImageSets: string[][] = []
+      for (const set of pdfImageSets) {
+        const serializableSet: string[] = []
+        for (const url of set) {
+          serializableSet.push(await toDataUrl(url))
+        }
+        serializableImageSets.push(serializableSet)
+      }
+
+      // Also persist helper mapping if available
+      const pdfUrlByFirstImageUrl = (window as any).__pdfUrlByFirstImageUrl || {}
+
       const workspaceData = {
+        version: 1,
         snapshot,
-        pdfImageSets,
+        pdfImageSets: serializableImageSets,
+        pdfBase64s,
         currentPdfSet,
         pdfNames,
+        pdfAnnotsByDoc: (window as any).__pdfAnnotsByDoc || {},
+        pdfUrlByFirstImageUrl,
         timestamp: new Date().toISOString()
       }
 
@@ -264,6 +278,9 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
     }
   }
 
+  // Keep a pending snapshot if load happens before editor is ready
+  const pendingSnapshotRef = useRef<any | null>(null)
+
   const loadWorkspace = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -272,16 +289,67 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
     reader.onload = async (e) => {
       try {
         const workspaceData = JSON.parse(e.target?.result as string)
+        console.log('[Workspace] Loaded JSON keys:', Object.keys(workspaceData || {}))
         
+        // Restore PDFs first
         if (workspaceData.pdfImageSets) {
+          console.log('[Workspace] Restoring pdfImageSets:', workspaceData.pdfImageSets.length)
           setPdfImageSets(workspaceData.pdfImageSets)
+          // Restore helper map if present
+          if (workspaceData.pdfUrlByFirstImageUrl) {
+            try { (window as any).__pdfUrlByFirstImageUrl = workspaceData.pdfUrlByFirstImageUrl } catch {}
+          }
+          console.log('[Workspace] Restoring currentPdfSet:', workspaceData.currentPdfSet)
           setCurrentPdfSet(workspaceData.currentPdfSet || 0)
+          console.log('[Workspace] Restoring pdfNames:', (workspaceData.pdfNames || []).length)
           setPdfNames(workspaceData.pdfNames || [])
+          console.log('[Workspace] Restoring pdfBase64s:', (workspaceData.pdfBase64s || []).length)
+          setPdfBase64s(workspaceData.pdfBase64s || [])
           setPdfViewerVisible(true)
         }
+
+        // Re-key PDF annotations to match the keys SimplePdfViewer will use after reload
+        // New key format favors the data URL if we have base64, else falls back to first image url
+        if (workspaceData.pdfAnnotsByDoc) {
+          try {
+            const annotsByDoc: Record<string, Record<number, any[]>> = workspaceData.pdfAnnotsByDoc || {}
+            const rekeyed: Record<string, Record<number, any[]>> = { ...annotsByDoc }
+
+            const sets: string[][] = workspaceData.pdfImageSets || []
+            const b64s: (string | null)[] = workspaceData.pdfBase64s || []
+            console.log('[Workspace] Rekey pass over', sets.length, 'PDF sets')
+
+            for (let i = 0; i < sets.length; i++) {
+              const firstImg = sets[i]?.[0]
+              const b64 = b64s[i]
+              const dataUrlKey = b64 ? `data:application/pdf;base64,${b64}` : (firstImg || null)
+              if (!dataUrlKey) continue
+
+              // If there are annotations stored under the first image key, copy them to the data URL key
+              if (firstImg && annotsByDoc[firstImg] && !rekeyed[dataUrlKey]) {
+                console.log(`[Workspace] Migrating annots key ${firstImg} -> ${dataUrlKey}`)
+                rekeyed[dataUrlKey] = annotsByDoc[firstImg]
+              }
+            }
+
+            ;(window as any).__pdfAnnotsByDoc = rekeyed
+          } catch {}
+        }
         
-        if (workspaceData.snapshot && editorInstance) {
-          editorInstance.store.loadSnapshot(workspaceData.snapshot)
+        // Apply snapshot now if editor is ready, otherwise defer
+        if (workspaceData.snapshot) {
+          console.log('[Workspace] Snapshot present; editor ready?', !!editorInstance)
+          if (editorInstance) {
+            try {
+              editorInstance.store.loadSnapshot(workspaceData.snapshot)
+              console.log('[Workspace] Snapshot applied immediately')
+            } catch (err) {
+              console.error('[Workspace] Snapshot apply error:', err)
+            }
+          } else {
+            pendingSnapshotRef.current = workspaceData.snapshot
+            console.log('[Workspace] Snapshot deferred until editor mounts')
+          }
         }
         
         setProcessingStatus('Workspace loaded successfully!')
@@ -294,6 +362,21 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
     event.target.value = '' // Clear the input
   }
 
+  // If a snapshot was loaded before the editor mounted, apply it once the editor is ready
+  useEffect(() => {
+    if (editorInstance && pendingSnapshotRef.current) {
+      try {
+        console.log('[Workspace] Editor mounted; applying deferred snapshot')
+        editorInstance.store.loadSnapshot(pendingSnapshotRef.current)
+        console.log('[Workspace] Deferred snapshot applied')
+      } catch (err) {
+        console.error('[Workspace] Deferred snapshot apply error:', err)
+      } finally {
+        pendingSnapshotRef.current = null
+      }
+    }
+  }, [editorInstance])
+
   const togglePdfViewer = () => {
     setPdfViewerVisible(!pdfViewerVisible)
   }
@@ -301,10 +384,6 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
   return (
     <div 
       style={{ width: '100%', height: '100vh', position: 'relative' }}
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
     >
       {/* Virtual Classroom Header */}
       <div
@@ -538,6 +617,7 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
       <div style={{ paddingTop: '60px', height: '100%' }}>
         <TldrawEditor 
           samplePdfImages={pdfViewerVisible ? (pdfImageSets[currentPdfSet] || []) : []}
+          currentPdfBase64={pdfViewerVisible ? (pdfBase64s[currentPdfSet] || null) : null}
           showColorSidebar={showColorSidebar}
           onEditorMount={setEditorInstance}
           showPdfViewer={pdfViewerVisible}
@@ -591,46 +671,9 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
         </div>
       )}
 
-      {/* Drag and Drop Overlay */}
-      {isDragOver && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(37, 99, 235, 0.9)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1000,
-            backdropFilter: 'blur(4px)',
-          }}
-        >
-          <div
-            style={{
-              textAlign: 'center',
-              color: 'white',
-              padding: '40px',
-              borderRadius: '16px',
-              border: '3px dashed rgba(255, 255, 255, 0.8)',
-              backgroundColor: 'rgba(0, 0, 0, 0.3)',
-            }}
-          >
-            <Upload size={64} style={{ marginBottom: '16px', opacity: 0.9 }} />
-            <h2 style={{ fontSize: '24px', marginBottom: '8px', fontWeight: '600' }}>
-              Drop PDF Files Here
-            </h2>
-            <p style={{ fontSize: '16px', opacity: 0.9 }}>
-              Release to upload and process PDF files
-            </p>
-          </div>
-        </div>
-      )}
 
       {/* Instructions Overlay (shows when no PDFs are loaded) */}
-      {(pdfImageSets.length === 0 || pdfImageSets[currentPdfSet]?.length === 0) && !isDragOver && (
+      {(pdfImageSets.length === 0 || pdfImageSets[currentPdfSet]?.length === 0) && (
         <div
           style={{
             position: 'absolute',
@@ -650,7 +693,7 @@ export const VirtualClassroom: React.FC<VirtualClassroomProps> = ({
             No PDF Loaded
           </h3>
           <p style={{ marginBottom: '16px', opacity: 0.9 }}>
-            Upload a PDF file, drag & drop files here, or use the sample PDF to get started with annotations.
+            Upload a PDF file or use the sample PDF to get started with annotations.
           </p>
           <button
           onClick={() => {
